@@ -81,7 +81,17 @@ class AplikasiResep:
         self.ikon = {}
         self.muat_semua_ikon()
 
-        self.resep = self.muat_resep()
+        try:
+            self.resep = self.muat_resep()
+        except Exception as err:
+            messagebox.showerror(
+                "Koneksi Database Gagal",
+                f"Pastikan MySQL di XAMPP sudah dinyalakan.\n\nDetail: {err}",
+                parent=self.root,
+            )
+            self.root.destroy()
+            return
+        
         self.tab_aktif = "Resep"        # "Resep" atau "Favorit"
         self.resep_dipilih = None       # resep yang sedang dilihat
         self.resep_diedit = None        # resep yang sedang diedit (None = resep baru)
