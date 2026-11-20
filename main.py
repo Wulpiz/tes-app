@@ -553,25 +553,41 @@ class AplikasiResep:
         self.kanvas_kartu.yview_moveto(0)
 
     def buat_kartu(self, r, baris, kolom):
-        kartu = tk.Frame(self.isi_kartu, bg=r["color"], width=177, height=177, cursor="hand2")
+        # Total kartu 177x232: foto persegi 177x177 di atas + bar nama 55px di bawah
+        kartu = tk.Frame(self.isi_kartu, bg=PUTIH, width=177, height=232, cursor="hand2")
         kartu.grid(row=baris, column=kolom, sticky="nw", padx=(0, 10), pady=(0, 10))
         kartu.pack_propagate(False)
-        # Bar nama: tingginya menyesuaikan panjang nama (teks turun ke baris berikutnya)
-        bar = tk.Frame(kartu, bg=ORANYE, cursor="hand2")
-        bar.place(x=0, rely=1.0, anchor="sw", width=177)
-        nama = tk.Label(
-            bar, text=r["name"], bg=ORANYE, fg=PUTIH, font=self.font(19),
-            anchor="w", justify="left", wraplength=161, cursor="hand2",
-        )
-        nama.pack(fill="x", padx=8, pady=7)
-        widget_klik = [kartu, bar, nama]
+
+        area_foto = tk.Frame(kartu, bg=r["color"], width=177, height=177, cursor="hand2")
+        area_foto.pack(side="top")
+        area_foto.pack_propagate(False)
+
+        widget_klik = [kartu, area_foto]
         gambar = self.muat_foto(self.path_foto(r.get("photo")), 177, 177)
         if gambar:
-            label_foto = tk.Label(kartu, image=gambar, bg=r["color"], bd=0, cursor="hand2")
+            label_foto = tk.Label(area_foto, image=gambar, bg=r["color"], bd=0, cursor="hand2")
             label_foto.image = gambar
-            label_foto.place(x=0, y=0)
-            bar.lift()  # bar nama tetap di atas foto
+            label_foto.pack(fill="both", expand=True)
             widget_klik.append(label_foto)
+
+        bar = tk.Frame(kartu, bg=ORANYE, height=55, cursor="hand2")
+        bar.pack(side="bottom", fill="x")
+        bar.pack_propagate(False)
+
+        nama = tk.Label(
+            bar,
+            text=r["name"],
+            bg=ORANYE,
+            fg=PUTIH,
+            font=self.font(16),
+            anchor="w",
+            justify="left",
+            wraplength=161,
+            cursor="hand2",
+        )
+        nama.pack(fill="both", expand=True, padx=8, pady=4)
+        widget_klik.extend([bar, nama])
+
         for widget in widget_klik:
             widget.bind("<Button-1>", lambda e, r=r: self.tampil_detail(r))
 
@@ -629,10 +645,16 @@ class AplikasiResep:
         bar_nama = tk.Frame(area_foto, bg=ORANYE)
         bar_nama.place(x=0, rely=1.0, anchor="sw", relwidth=1)
         tk.Label(
-            bar_nama, text=r["name"], bg=ORANYE, fg=PUTIH, font=self.font(26),
-            anchor="w", justify="left", wraplength=UKURAN_FOTO_DETAIL - 28,
+            bar_nama,
+            text=r["name"],
+            bg=ORANYE,
+            fg=PUTIH,
+            font=self.font(26),
+            anchor="w",
+            justify="left",
+            wraplength=UKURAN_FOTO_DETAIL - 28,
         ).pack(fill="x", padx=14, pady=12)
-
+        
         # Panel bahan
         panel_bahan = self.buat_panel(badan)
         panel_bahan.grid(row=1, column=0, sticky="nsew", padx=(0, 20))
