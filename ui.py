@@ -4,7 +4,9 @@ Judul jendela, tombol minimize, maximize, dan close memakai bar bawaan Windows.
 Ikon dibaca dari folder assets/icons (format PNG, ukuran sekitar 24x24 piksel).
 """
 
+from db import execute, execute_many, get_pool, query
 import os
+import re
 import shutil
 import sys
 import tkinter as tk
@@ -98,15 +100,50 @@ class AplikasiResep:
         self.tampil_beranda()
 
     # ------------------------------------------------------------ persiapan
-    def muat_resep(self):
-        """Daftar resep awal. Sengaja kosong: data nanti diambil dari MySQL.
+    def _simpan_relasi_bahan(self, conn, id_recipe, daftar_bahan):
+            execute(conn, "DELETE FROM recipe_ingredients WHERE id_recipe = %s", (id_recipe,))
+            for takaran, nama_bahan in daftar_bahan:
+                nama_rapi = " ".join(nama_bahan.split()).title()
+                if not nama_rapi:
+                    continue
+                # Cek apakah bahan sudah ada di master ingredients
+                row = query(conn, "SELECT id_ingredient FROM ingredients WHERE nama_bahan = %s", (nama_rapi,), one=True)
+                if row:
+                    id_ing = row["id_ingredient"]
+                else:
+                    id_ing = execute(conn, "INSERT INTO ingredients (nama_bahan) VALUES (%s)", (nama_rapi,))
+                
+                execute(
+                    conn,
+                    "INSERT INTO recipe_ingredients (id_recipe, id_ingredient, jumlah_kebutuhan) VALUES (%s, %s, %s)",
+                    (id_recipe, id_ing, takaran)
+                )
 
-        Bentuk tiap resep:
-        {"name": str, "color": str, "favorite": bool,
-         "photo": nama file di folder foto/ ("" kalau tidak ada),
-         "ingredients": [(takaran, bahan), ...], "directions": [langkah, ...]}
-        """
-        return []
+    def muat_resep(self):
+        conn = get_pool().get_connection()
+        try:
+            rows = query(conn, "SELECT * FROM recipes ORDER BY id_recipe")
+            hasil = []
+            for r in rows:
+                bahan_rows = query(conn, """
+                    SELECT ri.jumlah_kebutuhan, i.nama_bahan
+                    FROM recipe_ingredients ri
+                    JOIN ingredients i ON i.id_ingredient = ri.id_ingredient
+                    WHERE ri.id_recipe = %s
+                """, (r["id_recipe"],))
+                
+                hasil.append({
+                    "id_recipe": r["id_recipe"],
+                    "name": r["nama_resep"],
+                    "color": r.get("warna") or WARNA_KARTU[len(hasil) % len(WARNA_KARTU)],
+                    "favorite": bool(r.get("favorit", 0)),
+                    "photo": r.get("foto") or "",
+                    "ingredients": [(b["jumlah_kebutuhan"] or "", b["nama_bahan"]) for b in bahan_rows],
+                    "directions": self.daftar_langkah(r["langkah_pembuatan"] or ""),
+                })
+            return hasil
+        finally:
+            conn.close()
 
     def pilih_font(self):
         tersedia = set(tkfont.families())
@@ -340,10 +377,15 @@ class AplikasiResep:
         return hasil
 
     def daftar_langkah(self, nilai):
-        """Ubah data langkah jadi daftar teks (satu langkah per baris)."""
+        """Ubah data langkah jadi daftar teks bersih tanpa awalan nomor."""
         if isinstance(nilai, str):
             nilai = nilai.splitlines()
-        return [str(langkah).strip() for langkah in nilai if str(langkah).strip()]
+        hasil = []
+        for langkah in nilai:
+            teks = re.sub(r"^\d+[\.\)]\s*", "", str(langkah).strip())
+            if teks:
+                hasil.append(teks)
+        return hasil
 
     # ------------------------------------------------------------ BERANDA
     def tampil_beranda(self):
@@ -504,13 +546,14 @@ class AplikasiResep:
         kartu = tk.Frame(self.isi_kartu, bg=r["color"], width=177, height=177, cursor="hand2")
         kartu.grid(row=baris, column=kolom, sticky="nw", padx=(0, 10), pady=(0, 10))
         kartu.pack_propagate(False)
-        bar = tk.Frame(kartu, bg=ORANYE, height=38, cursor="hand2")
-        bar.place(x=0, y=139, width=177, height=38)
-        bar.pack_propagate(False)
+        # Bar nama: tingginya menyesuaikan panjang nama (teks turun ke baris berikutnya)
+        bar = tk.Frame(kartu, bg=ORANYE, cursor="hand2")
+        bar.place(x=0, rely=1.0, anchor="sw", width=177)
         nama = tk.Label(
-            bar, text=r["name"], bg=ORANYE, fg=PUTIH, font=self.font(24), anchor="w", cursor="hand2"
+            bar, text=r["name"], bg=ORANYE, fg=PUTIH, font=self.font(19),
+            anchor="w", justify="left", wraplength=161, cursor="hand2",
         )
-        nama.pack(side="left", padx=(8, 0))
+        nama.pack(fill="x", padx=8, pady=7)
         widget_klik = [kartu, bar, nama]
         gambar = self.muat_foto(self.path_foto(r.get("photo")), 177, 177)
         if gambar:
@@ -573,12 +616,12 @@ class AplikasiResep:
             label_foto = tk.Label(area_foto, image=gambar, bg=r["color"], bd=0)
             label_foto.image = gambar
             label_foto.place(x=0, y=0)
-        bar_nama = tk.Frame(area_foto, bg=ORANYE, height=56)
-        bar_nama.place(x=0, rely=1.0, anchor="sw", relwidth=1, height=56)
-        bar_nama.pack_propagate(False)
+        bar_nama = tk.Frame(area_foto, bg=ORANYE)
+        bar_nama.place(x=0, rely=1.0, anchor="sw", relwidth=1)
         tk.Label(
-            bar_nama, text=r["name"], bg=ORANYE, fg=PUTIH, font=self.font(26), anchor="w"
-        ).pack(fill="both", expand=True, padx=14)
+            bar_nama, text=r["name"], bg=ORANYE, fg=PUTIH, font=self.font(26),
+            anchor="w", justify="left", wraplength=UKURAN_FOTO_DETAIL - 28,
+        ).pack(fill="x", padx=14, pady=12)
 
         # Panel bahan
         panel_bahan = self.buat_panel(badan)
@@ -645,17 +688,27 @@ class AplikasiResep:
     def ubah_favorit(self):
         r = self.resep_dipilih
         r["favorite"] = not r["favorite"]
-        # TODO: simpan perubahan favorit ke database MySQL di sini
+        conn = get_pool().get_connection()
+        try:
+            execute(conn, "UPDATE recipes SET favorit = %s WHERE id_recipe = %s", (int(r["favorite"]), r["id_recipe"]))
+            conn.commit()
+        finally:
+            conn.close()
         self.tampil_detail(r)
 
     def hapus_resep(self):
         r = self.resep_dipilih
         if not messagebox.askyesno("Hapus resep", f"Hapus resep “{r['name']}”?", parent=self.root):
             return
+        conn = get_pool().get_connection()
+        try:
+            execute(conn, "DELETE FROM recipes WHERE id_recipe = %s", (r["id_recipe"],))
+            conn.commit()
+        finally:
+            conn.close()
         self.resep.remove(r)
-        # TODO: hapus resep dari database MySQL di sini
         self.tampil_beranda()
-
+        
     # ------------------------------------------------------ FORM RESEP
     def tampil_form(self, r=None):
         self.bersihkan_halaman()
@@ -915,21 +968,45 @@ class AplikasiResep:
             messagebox.showerror("Foto", "Foto tidak bisa disimpan. Coba lagi.", parent=self.root)
             return
 
-        data = {
-            "name": nama,
-            "photo": nama_foto,  # simpan nama file ini ke kolom foto (VARCHAR) di MySQL
-            "ingredients": self.ambil_bahan(),
-            "directions": self.daftar_langkah(self.teks_langkah.get("1.0", "end-1c")),
-        }
-        if self.resep_diedit is not None:
-            self.resep_diedit.update(data)
-            # TODO: update resep di database MySQL di sini
-            self.tampil_detail(self.resep_diedit)
-            return
+        bahan_list = self.ambil_bahan()
+        langkah_list = self.daftar_langkah(self.teks_langkah.get("1.0", "end-1c"))
+        langkah_teks = "\n".join(langkah_list)
 
-        warna = WARNA_KARTU[len(self.resep) % len(WARNA_KARTU)]
-        self.resep.append({**data, "color": warna, "favorite": False})
-        # TODO: simpan resep baru ke database MySQL di sini
+        conn = get_pool().get_connection()
+        try:
+            if self.resep_diedit is not None:
+                id_rec = self.resep_diedit["id_recipe"]
+                execute(
+                    conn,
+                    "UPDATE recipes SET nama_resep=%s, foto=%s, langkah_pembuatan=%s WHERE id_recipe=%s",
+                    (nama, nama_foto, langkah_teks, id_rec)
+                )
+                self._simpan_relasi_bahan(conn, id_rec, bahan_list)
+                conn.commit()
+                self.resep_diedit.update({
+                    "name": nama, "photo": nama_foto,
+                    "ingredients": bahan_list, "directions": langkah_list
+                })
+                self.tampil_detail(self.resep_diedit)
+                return
+
+            warna = WARNA_KARTU[len(self.resep) % len(WARNA_KARTU)]
+            new_id = execute(
+                conn,
+                "INSERT INTO recipes (nama_resep, foto, langkah_pembuatan, warna, favorit) VALUES (%s, %s, %s, %s, 0)",
+                (nama, nama_foto, langkah_teks, warna)
+            )
+            self._simpan_relasi_bahan(conn, new_id, bahan_list)
+            conn.commit()
+
+            self.resep.append({
+                "id_recipe": new_id, "name": nama, "photo": nama_foto,
+                "ingredients": bahan_list, "directions": langkah_list,
+                "color": warna, "favorite": False
+            })
+        finally:
+            conn.close()
+
         self.tab_aktif = "Resep"
         self.tampil_beranda()
 
